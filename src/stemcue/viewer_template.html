@@ -1,0 +1,468 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; media-src data:; img-src data:">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__STEMCUE_TITLE__ - stemcue</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; padding: 12px 16px; background: #15171c; color: #e3e6ec; font: 13px/1.4 system-ui, sans-serif; }
+  header { display: flex; align-items: baseline; gap: 16px; }
+  h1 { font-size: 18px; margin: 0; }
+  #meta { color: #9aa3b2; }
+  #transport { display: flex; align-items: center; gap: 14px; margin: 10px 0; flex-wrap: wrap; }
+  #transport button, #filters button { background: #2b3040; color: inherit; border: 1px solid #454c60; border-radius: 4px; padding: 4px 12px; cursor: pointer; }
+  #time, #label { font-family: ui-monospace, monospace; min-width: 90px; }
+  #wrap { position: relative; border: 1px solid #2c313d; }
+  #scroller { overflow-x: auto; overflow-y: hidden; }
+  #track { position: relative; }
+  #timeline { position: sticky; left: 0; display: block; cursor: crosshair; }
+  #tooltip { position: absolute; pointer-events: none; background: #000c; border: 1px solid #555; padding: 4px 6px; white-space: pre; font-family: ui-monospace, monospace; font-size: 12px; z-index: 2; }
+  #silent { color: #8a92a3; margin: 6px 0 14px; }
+  #filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 8px; }
+  #filters label { white-space: nowrap; }
+  #tsv { width: 100%; height: 140px; background: #0f1115; color: inherit; font-family: ui-monospace, monospace; margin-bottom: 8px; }
+  table { border-collapse: collapse; width: 100%; font-family: ui-monospace, monospace; font-size: 12px; }
+  th, td { text-align: left; padding: 2px 10px 2px 0; border-bottom: 1px solid #232733; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: #232838; }
+  #count { color: #9aa3b2; }
+</style>
+</head>
+<body>
+<header><h1 id="title"></h1><span id="meta"></span></header>
+<div id="transport">
+  <button id="play" type="button">Play</button>
+  <span id="time">0:00.000</span>
+  <span id="label">-</span>
+  <label>zoom <input id="zoom" type="range" min="20" max="800" value="100"></label>
+  <span id="zoomval"></span>
+  <label><input id="follow" type="checkbox" checked> follow</label>
+</div>
+<div id="wrap">
+  <div id="scroller"><div id="track"><canvas id="timeline"></canvas></div></div>
+  <div id="tooltip" hidden></div>
+</div>
+<div id="silent"></div>
+<section>
+  <div id="filters">
+    <span id="kinds"></span>
+    <label>stem <select id="stem"></select></label>
+    <label>min strength <input id="minstrength" type="range" min="0" max="1" step="0.01" value="0"></label>
+    <span id="minval">0.00</span>
+    <button id="tsvbtn" type="button">TSV</button>
+    <span id="count"></span>
+  </div>
+  <textarea id="tsv" readonly hidden></textarea>
+  <table>
+    <thead><tr><th>time</th><th>label</th><th>offset_ms</th><th>kind</th><th>source</th><th>strength</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+</section>
+<audio id="player" preload="auto" src="__STEMCUE_AUDIO__"></audio>
+<script id="stemcue-data" type="application/json">__STEMCUE_DATA__</script>
+<script>
+"use strict";
+const data = JSON.parse(document.getElementById("stemcue-data").textContent);
+const $ = (id) => document.getElementById(id);
+const audio = $("player");
+const scroller = $("scroller");
+const track = $("track");
+const canvas = $("timeline");
+const ctx = canvas.getContext("2d");
+const tooltip = $("tooltip");
+const zoom = $("zoom");
+const follow = $("follow");
+
+const KINDS = ["onset", "kick", "snare", "cymbal", "band_hit", "enter", "exit", "stop"];
+const DRUM_KINDS = ["kick", "snare", "cymbal"];
+const COLORS = { onset: "#7fb3ff", kick: "#ff9f5a", snare: "#ffd166", cymbal: "#9be38f", band_hit: "#ff6b9a",
+                 enter: "#6ee7c8", exit: "#c49bff", stop: "#ff5555" };
+const duration = data.duration;
+const beatTimes = data.beats.map((b) => b.t);
+const downbeatTimes = data.beats.filter((b) => b.downbeat).map((b) => b.t);
+const medIbi = (() => {
+  const d = [];
+  for (let i = 1; i < beatTimes.length; i++) d.push(beatTimes[i] - beatTimes[i - 1]);
+  d.sort((a, b) => a - b);
+  if (!d.length) return 0;
+  const m = Math.floor(d.length / 2);
+  return d.length % 2 ? d[m] : (d[m - 1] + d[m]) / 2;
+})();
+const liveStems = data.source.stems.filter((s) => !s.silent).map((s) => s.name);
+const silentStems = data.source.stems.filter((s) => s.silent).map((s) => s.name);
+const events = data.events;
+
+let pps = Number(zoom.value);
+
+function fmt(t) {
+  const ms = Math.max(0, Math.round(t * 1000));
+  const m = Math.floor(ms / 60000);
+  const s = Math.floor((ms % 60000) / 1000);
+  return `${m}:${String(s).padStart(2, "0")}.${String(ms % 1000).padStart(3, "0")}`;
+}
+
+function upperBound(list, t) {
+  let lo = 0, hi = list.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (list[mid] <= t) lo = mid + 1; else hi = mid;
+  }
+  return lo;
+}
+
+// A grid rebuilt from a fix file can hold free-tempo spans and gaps; positions there must match the Python side.
+const fixedGrid = Boolean(data.grid && data.grid.source === "fix");
+const freeSpans = fixedGrid && data.grid.fix ? data.grid.fix.segments.filter((s) => s.type === "free") : [];
+
+function labelAt(t) {
+  const n = beatTimes.length;
+  if (n < 2 || t < beatTimes[0] || t >= beatTimes[n - 1] + medIbi) return null;
+  if (freeSpans.some((s) => s.start <= t && t < s.end)) return null;
+  let j = upperBound(beatTimes, t) - 1;
+  const gap = fixedGrid && j + 1 < n && beatTimes[j + 1] - beatTimes[j] > 1.5 * medIbi;
+  if (fixedGrid && (gap || j + 1 === n) && t >= beatTimes[j] + medIbi) return null;
+  const ibi = j + 1 < n && !gap ? beatTimes[j + 1] - beatTimes[j] : medIbi;
+  let q = Math.round(((t - beatTimes[j]) / ibi) * 4);
+  if (q === 4) {
+    if (j + 1 < n && !gap) { j += 1; q = 0; } else { q = 3; }
+  }
+  const b = data.beats[j];
+  return `${b.bar}.${b.beat}.${q + 1}`;
+}
+
+const lanes = [];
+let laneY = 0;
+function addLane(type, h, extra) {
+  lanes.push(Object.assign({ type, y: laneY, h }, extra));
+  laneY += h;
+}
+addLane("ruler", 26, { label: "" });
+addLane("env", 56, { label: "mix", env: data.envelopes.mix, ticks: [] });
+for (const name of liveStems) {
+  addLane("env", 44, { label: name, env: data.envelopes.stems[name] || [],
+                       ticks: events.filter((e) => e.kind === "onset" && e.source === name), color: COLORS.onset });
+}
+for (const kind of DRUM_KINDS) {
+  const ticks = events.filter((e) => e.kind === kind);
+  if (ticks.length) addLane("ticks", 22, { label: kind, ticks, color: COLORS[kind] });
+}
+addLane("events", 34, { label: "events" });
+const HEIGHT = laneY;
+const ruler = lanes[0];
+const stops = events.filter((e) => e.kind === "stop");
+const marks = events.filter((e) => e.kind === "band_hit" || e.kind === "enter" || e.kind === "exit");
+
+function view() {
+  const w = scroller.clientWidth;
+  const t0 = scroller.scrollLeft / pps;
+  return { w, t0, t1: t0 + w / pps, x: (t) => (t - t0) * pps };
+}
+
+function rulerStep() {
+  for (const s of [0.5, 1, 2, 5, 10, 30, 60]) if (s * pps >= 60) return s;
+  return 120;
+}
+
+function drawEnvelope(lane, v) {
+  const env = lane.env;
+  if (!env.length) return;
+  const fps = data.envelopes.fps;
+  const k0 = Math.max(0, Math.floor(v.t0 * fps) - 1);
+  const k1 = Math.min(env.length - 1, Math.ceil(v.t1 * fps) + 1);
+  if (k1 < k0) return;
+  const bottom = lane.y + lane.h - 1;
+  const scale = (lane.h - 6) / 60;
+  ctx.beginPath();
+  ctx.moveTo(v.x(k0 / fps), bottom);
+  for (let k = k0; k <= k1; k++) ctx.lineTo(v.x(k / fps), bottom - (env[k] + 60) * scale);
+  ctx.lineTo(v.x(k1 / fps), bottom);
+  ctx.closePath();
+  ctx.fillStyle = "#3a4a6a";
+  ctx.fill();
+}
+
+function drawTicks(lane, v) {
+  const bottom = lane.y + lane.h - 1;
+  ctx.strokeStyle = lane.color;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (const e of lane.ticks) {
+    if (e.t < v.t0 - 1 || e.t > v.t1 + 1) continue;
+    const x = Math.round(v.x(e.t)) + 0.5;
+    ctx.moveTo(x, bottom);
+    ctx.lineTo(x, bottom - Math.min(1, e.strength) * (lane.h - 4));
+  }
+  ctx.stroke();
+}
+
+function drawEvents(lane, v) {
+  const mid = lane.y + lane.h / 2;
+  for (const e of stops) {
+    if (e.end < v.t0 || e.t > v.t1) continue;
+    ctx.fillStyle = "#ff555544";
+    ctx.fillRect(v.x(e.t), lane.y, (e.end - e.t) * pps, lane.h);
+  }
+  for (const e of marks) {
+    if (e.t < v.t0 - 1 || e.t > v.t1 + 1) continue;
+    const x = v.x(e.t);
+    ctx.fillStyle = COLORS[e.kind];
+    ctx.beginPath();
+    if (e.kind === "band_hit") {
+      const r = 3 + 6 * Math.min(1, e.strength);
+      ctx.moveTo(x, mid - r); ctx.lineTo(x + r, mid); ctx.lineTo(x, mid + r); ctx.lineTo(x - r, mid);
+    } else if (e.kind === "enter") {
+      ctx.moveTo(x, lane.y + 3); ctx.lineTo(x + 5, lane.y + 12); ctx.lineTo(x - 5, lane.y + 12);
+    } else {
+      const b = lane.y + lane.h - 3;
+      ctx.moveTo(x, b); ctx.lineTo(x + 5, b - 9); ctx.lineTo(x - 5, b - 9);
+    }
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
+function drawRuler(v) {
+  for (const w of data.beat_check) {
+    if (w.agree >= 0.6 || w.end < v.t0 || w.start > v.t1) continue;
+    ctx.fillStyle = "#ff8c0040";
+    ctx.fillRect(v.x(w.start), ruler.y, (w.end - w.start) * pps, ruler.h);
+  }
+  const step = rulerStep();
+  ctx.fillStyle = "#9aa3b2";
+  ctx.strokeStyle = "#5a6275";
+  ctx.lineWidth = 1;
+  ctx.font = "10px ui-monospace, monospace";
+  ctx.beginPath();
+  for (let t = Math.max(0, Math.floor(v.t0 / step) * step); t <= Math.min(duration, v.t1); t += step) {
+    const x = Math.round(v.x(t)) + 0.5;
+    ctx.moveTo(x, ruler.y); ctx.lineTo(x, ruler.y + 6);
+    ctx.fillText(`${Math.round(t * 10) / 10}s`, x + 2, ruler.y + 10);
+  }
+  ctx.stroke();
+  ctx.fillStyle = "#e3e6ec";
+  for (const bar of data.bars) {
+    if (bar.start < v.t0 - 1 || bar.start > v.t1) continue;
+    ctx.fillText(String(bar.n), v.x(bar.start) + 3, ruler.y + ruler.h - 4);
+  }
+}
+
+function drawBeatLines(v) {
+  for (const b of data.beats) {
+    if (b.t < v.t0 || b.t > v.t1) continue;
+    const x = Math.round(v.x(b.t)) + 0.5;
+    ctx.strokeStyle = b.downbeat ? "#c8cfdd88" : "#c8cfdd26";
+    ctx.lineWidth = b.downbeat ? 2 : 1;
+    ctx.beginPath();
+    ctx.moveTo(x, ruler.y + 12);
+    ctx.lineTo(x, HEIGHT);
+    ctx.stroke();
+  }
+}
+
+function drawLabels() {
+  ctx.font = "11px system-ui, sans-serif";
+  for (const lane of lanes) {
+    if (!lane.label) continue;
+    const w = ctx.measureText(lane.label).width;
+    ctx.fillStyle = "#15171ccc";
+    ctx.fillRect(2, lane.y + 2, w + 8, 15);
+    ctx.fillStyle = "#e3e6ec";
+    ctx.fillText(lane.label, 6, lane.y + 13);
+  }
+}
+
+function draw() {
+  const v = view();
+  const dpr = window.devicePixelRatio || 1;
+  if (canvas.width !== Math.round(v.w * dpr) || canvas.height !== Math.round(HEIGHT * dpr)) {
+    canvas.width = Math.round(v.w * dpr);
+    canvas.height = Math.round(HEIGHT * dpr);
+    canvas.style.width = `${v.w}px`;
+    canvas.style.height = `${HEIGHT}px`;
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = "#15171c";
+  ctx.fillRect(0, 0, v.w, HEIGHT);
+  lanes.forEach((lane, i) => {
+    ctx.fillStyle = i % 2 ? "#1a1d24" : "#1d2029";
+    ctx.fillRect(0, lane.y, v.w, lane.h);
+  });
+  drawRuler(v);
+  drawBeatLines(v);
+  for (const lane of lanes) {
+    if (lane.type === "env") { drawEnvelope(lane, v); drawTicks(lane, v); }
+    else if (lane.type === "ticks") drawTicks(lane, v);
+    else if (lane.type === "events") drawEvents(lane, v);
+  }
+  drawLabels();
+  const px = Math.round(v.x(audio.currentTime)) + 0.5;
+  ctx.strokeStyle = "#ff3030";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(px, 0);
+  ctx.lineTo(px, HEIGHT);
+  ctx.stroke();
+  $("time").textContent = fmt(audio.currentTime);
+  $("label").textContent = labelAt(audio.currentTime) || "-";
+}
+
+function setZoom(next, anchorX) {
+  const w = scroller.clientWidth;
+  const ax = anchorX === undefined ? w / 2 : anchorX;
+  const t = (scroller.scrollLeft + ax) / pps;
+  pps = Math.min(800, Math.max(20, next));
+  zoom.value = String(Math.round(pps));
+  $("zoomval").textContent = `${Math.round(pps)} px/s`;
+  track.style.width = `${Math.ceil(duration * pps)}px`;
+  scroller.scrollLeft = t * pps - ax;
+  draw();
+}
+
+function reveal(t) {
+  const v = view();
+  const x = v.x(t);
+  if (x < 0 || x > v.w * 0.85) scroller.scrollLeft = t * pps - v.w * 0.15;
+}
+
+function seek(t) {
+  audio.currentTime = Math.min(duration, Math.max(0, t));
+  reveal(audio.currentTime);
+  draw();
+}
+
+function toggle() {
+  if (audio.paused) audio.play(); else audio.pause();
+}
+
+function loop() {
+  if (audio.paused) return;
+  if (follow.checked) reveal(audio.currentTime);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+audio.addEventListener("play", () => { $("play").textContent = "Pause"; requestAnimationFrame(loop); });
+audio.addEventListener("pause", () => { $("play").textContent = "Play"; draw(); });
+audio.addEventListener("seeked", draw);
+$("play").addEventListener("click", () => { toggle(); $("play").blur(); });
+zoom.addEventListener("input", () => setZoom(Number(zoom.value)));
+scroller.addEventListener("scroll", draw);
+window.addEventListener("resize", draw);
+
+function timeAt(ev) {
+  const rect = canvas.getBoundingClientRect();
+  return { x: ev.clientX - rect.left, y: ev.clientY - rect.top, t: view().t0 + (ev.clientX - rect.left) / pps };
+}
+
+canvas.addEventListener("click", (ev) => seek(timeAt(ev).t));
+canvas.addEventListener("mousemove", (ev) => {
+  const p = timeAt(ev);
+  let near = null;
+  for (const e of events) if (!near || Math.abs(e.t - p.t) < Math.abs(near.t - p.t)) near = e;
+  const lines = [`${fmt(p.t)}  ${labelAt(p.t) || "-"}`];
+  if (near) lines.push(`${near.kind} ${near.source} @ ${fmt(near.t)}`);
+  tooltip.textContent = lines.join("\n");
+  tooltip.hidden = false;
+  tooltip.style.left = `${Math.min(p.x + 12, scroller.clientWidth - 220)}px`;
+  tooltip.style.top = `${p.y + 12}px`;
+});
+canvas.addEventListener("mouseleave", () => { tooltip.hidden = true; });
+scroller.addEventListener("wheel", (ev) => {
+  if (!(ev.ctrlKey || ev.metaKey)) return;
+  ev.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  setZoom(pps * Math.exp(-ev.deltaY * 0.002), ev.clientX - rect.left);
+}, { passive: false });
+
+function neighbour(list, t, dir) {
+  if (dir > 0) {
+    for (const x of list) if (x > t + 0.001) return x;
+    return t;
+  }
+  for (let i = list.length - 1; i >= 0; i--) if (list[i] < t - 0.001) return list[i];
+  return t;
+}
+
+document.addEventListener("keydown", (ev) => {
+  const tag = ev.target.tagName;
+  if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || tag === "BUTTON") return;
+  if (ev.code === "Space") {
+    ev.preventDefault();
+    toggle();
+  } else if (ev.key === "ArrowLeft" || ev.key === "ArrowRight") {
+    ev.preventDefault();
+    const list = ev.shiftKey ? downbeatTimes : beatTimes;
+    seek(neighbour(list, audio.currentTime, ev.key === "ArrowRight" ? 1 : -1));
+  }
+});
+
+const kindOn = {};
+for (const kind of KINDS) {
+  kindOn[kind] = kind !== "onset";
+  const label = document.createElement("label");
+  const box = document.createElement("input");
+  box.type = "checkbox";
+  box.checked = kindOn[kind];
+  box.addEventListener("change", () => { kindOn[kind] = box.checked; renderTable(); });
+  label.append(box, ` ${kind} `);
+  $("kinds").append(label);
+}
+const stemSelect = $("stem");
+for (const name of ["", ...liveStems]) {
+  const opt = document.createElement("option");
+  opt.value = name;
+  opt.textContent = name || "All";
+  stemSelect.append(opt);
+}
+stemSelect.addEventListener("change", renderTable);
+$("minstrength").addEventListener("input", () => {
+  $("minval").textContent = Number($("minstrength").value).toFixed(2);
+  renderTable();
+});
+
+function filtered() {
+  const stem = stemSelect.value;
+  const min = Number($("minstrength").value);
+  return events.filter((e) => kindOn[e.kind] && e.strength >= min
+    && (stem === "" || e.source === stem || (e.stems !== null && e.stems.includes(stem))));
+}
+
+function renderTable() {
+  const rows = filtered();
+  const frag = document.createDocumentFragment();
+  for (const e of rows) {
+    const tr = document.createElement("tr");
+    const cells = [e.t.toFixed(4), e.pos ? e.pos.label : "-", e.pos ? e.pos.offset_ms.toFixed(1) : "",
+                   e.kind, e.source, e.strength.toFixed(3)];
+    for (const c of cells) {
+      const td = document.createElement("td");
+      td.textContent = c;
+      tr.append(td);
+    }
+    tr.addEventListener("click", () => seek(e.t));
+    frag.append(tr);
+  }
+  $("rows").replaceChildren(frag);
+  $("count").textContent = `${rows.length} events`;
+}
+
+$("tsvbtn").addEventListener("click", () => {
+  const text = filtered().map((e) => [e.t, e.pos ? e.pos.label : "", e.kind, e.source, e.strength].join("\t"));
+  $("tsv").value = text.join("\n");
+  $("tsv").hidden = false;
+});
+
+const dirName = data.source.kind === "file" && data.source.stems.length
+  ? data.source.stems[0].name
+  : data.source.stem_dir.split(/[\\/]/).filter(Boolean).pop() || data.source.stem_dir;
+$("title").textContent = dirName;
+$("meta").textContent = `${data.tempo.bpm_median} BPM · ${fmt(duration)} · ${data.model.checkpoint}`;
+$("silent").textContent = silentStems.length ? silentStems.map((n) => `${n} (silent)`).join(", ") : "";
+track.style.height = `${HEIGHT}px`;
+setZoom(pps, 0);
+renderTable();
+</script>
+</body>
+</html>

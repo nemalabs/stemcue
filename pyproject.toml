@@ -1,0 +1,74 @@
+[project]
+name = "stemcue"
+version = "0.1.0"
+description = "Find cut-to-music hit points and a checkable beat/bar grid in Suno stems or a single song file"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "src/stemcue/vendor/beat_this/LICENSE"]
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "numpy",
+    "scipy",
+    "librosa>=0.11",
+    "soundfile>=0.13",
+    "soxr",
+    "torch>=2.10",
+    "torchaudio",
+    "einops",
+    "rotary-embedding-torch",
+    "safetensors",
+    "pydantic>=2",
+    "matplotlib>=3.9",
+]
+
+[project.scripts]
+stemcue = "stemcue.cli:main"
+
+[dependency-groups]
+dev = ["ruff", "mypy", "pytest"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/stemcue"]
+
+[tool.ruff]
+line-length = 120
+extend-exclude = ["src/stemcue/vendor"]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = ["D1", "D203", "D213", "D400", "D415", "TD", "T201", "TRY003", "EM101", "COM812", "CPY001"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "PLR2004", "ANN", "D", "S603", "S301", "S403", "INP001"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = "stemcue.vendor.*"
+ignore_errors = true
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib", "--basetemp=.tmp/pytest"]

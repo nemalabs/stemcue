@@ -1,0 +1,12 @@
+.venv/
+.cache/
+.tmp/
+.build/
+__pycache__/
+*.pyc
+.env
+.DS_Store
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.playwright-cli/
