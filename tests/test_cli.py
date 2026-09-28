@@ -26,7 +26,7 @@ FINAL0_SHA256 = "8c328b45f59d8dd3dff219253ff6a8d6482be57d0133a29140e2febbf8eb833
 HOSTILE_NAME = "<img src=x onerror=alert(1)>"
 
 
-def run_cli(*args: str, timeout: int = 120) -> subprocess.CompletedProcess[str]:
+def run_cli(*args: str, timeout: int = 120, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-m", "stemcue", *args],
         cwd=ROOT,
@@ -35,7 +35,7 @@ def run_cli(*args: str, timeout: int = 120) -> subprocess.CompletedProcess[str]:
         timeout=timeout,
         check=False,
         # matplotlib writes its font cache here instead of the user's home directory.
-        env={**os.environ, "MPLCONFIGDIR": str(ROOT / ".cache" / "matplotlib")},
+        env={**os.environ, "MPLCONFIGDIR": str(ROOT / ".cache" / "matplotlib"), **(env or {})},
     )
 
 
@@ -238,6 +238,18 @@ def test_analyze_synthetic_stems_writes_cues_and_viewer(tmp_path: Path, weights_
     assert "data:audio/mpeg;base64," in html
     embedded = html.split('<script id="stemcue-data" type="application/json">', 1)[1].split("</script>", 1)[0]
     assert json.loads(embedded) == cues
+
+
+def test_weights_dir_defaults_to_the_environment_variable(tmp_path: Path, final0_ckpt: Path) -> None:
+    wdir = tmp_path / "project" / ".cache" / "weights"
+    # A wrong fallback to ~/.cache must land in the test's own directory, not the real home.
+    env = {"STEMCUE_WEIGHTS_DIR": str(wdir), "HOME": str(tmp_path / "home")}
+
+    r = run_cli("weights", "import", str(final0_ckpt), "--name", "final0", env=env)
+
+    assert r.returncode == 0, r.stderr
+    assert r.stdout == f"final0\t{(wdir / 'final0.safetensors').resolve()}\n"
+    assert (wdir / "final0.safetensors").is_file()
 
 
 def test_import_real_checkpoint_converts_to_safetensors(tmp_path: Path, final0_ckpt: Path) -> None:
