@@ -36,14 +36,65 @@ beat_this のコードは stemcue の中に取り込んであり、beat_this の
 
 ## インストール
 
-[uv](https://docs.astral.sh/uv/)（Python のツールを入れて動かすためのソフト）が必要。Python 3.12 が入っていなければ uv が用意する。AI モデルを動かす PyTorch も一緒に入るので、最初のインストールはダウンロードに時間がかかる。
+[uv](https://docs.astral.sh/uv/)（Python のツールを入れて動かすためのソフト）と git が必要。Python 3.12 が入っていなければ uv が用意する。librosa、AI モデルを動かす PyTorch など、必要なライブラリは最初の実行時に uv がまとめて入れる。PyTorch が大きいので、最初はダウンロードに時間がかかる。
+
+### 使うプロジェクトの中に入れる（おすすめ）
+
+stemcue を使いたいプロジェクトの一番上のフォルダで、次を実行する。
+
+```bash
+git clone https://github.com/nemalabs/stemcue tools/stemcue
+mkdir -p .claude/skills
+cp -R tools/stemcue/.claude/skills/stemcue .claude/skills/     # Claude Code のスキルも使う場合
+```
+
+コマンドは、プロジェクトの一番上のフォルダで次のように実行する。
+
+```bash
+uv run --project tools/stemcue stemcue --help
+```
+
+`--project tools/stemcue` は「tools/stemcue にある stemcue を使う」という指定で、コマンドを実行する場所は変わらない。曲のファイルなどは、プロジェクトの一番上から見た場所で指定すればよい。stemcue 用の Python 環境は `tools/stemcue/.venv` にでき、ほかのプロジェクトには影響しない。
+
+このあとの説明では、コマンドを短く `stemcue …` と書く。プロジェクトの中に入れた場合は `uv run --project tools/stemcue stemcue …` と読み替えてほしい。
+
+`tools/stemcue/` を自分のプロジェクトの git で管理しないなら、`.gitignore` に足しておく。
+
+### パソコン全体で使えるように入れる
+
+どのフォルダからでも `stemcue` と打てば動くようにしたい場合は、こちら。
 
 ```bash
 uv tool install git+https://github.com/nemalabs/stemcue
+```
+
+`stemcue` が見つからないと言われたら、uv がコマンドを置くフォルダ（`uv tool dir --bin` で分かる）がシェルの PATH に入っていない。`uv tool update-shell` を実行して、ターミナルを開き直す。
+
+### weight を用意する
+
+```bash
 stemcue weights fetch          # beat_this の weight（final0）をダウンロードして変換する
 ```
 
-weight は `~/.cache/stemcue/weights` に保存される。置き場所を変えたいときは、`weights` と `analyze` に `--weights-dir` を付ける。`weights fetch` を先に実行しなくても、初めて `analyze` を実行したときに自動でダウンロードする。
+`weights fetch` を先に実行しなくても、初めて `analyze` を実行したときに自動でダウンロードする。
+
+weight の置き場所は、次の順で決まる。
+
+1. コマンドに付けた `--weights-dir`
+2. 環境変数 `STEMCUE_WEIGHTS_DIR`
+3. どちらもなければ `~/.cache/stemcue/weights`（ホームフォルダの中）
+
+プロジェクトの中に置きたいときは、環境変数 `STEMCUE_WEIGHTS_DIR` を設定する。たとえば `STEMCUE_WEIGHTS_DIR=.cache/stemcue/weights` にすると、コマンドを実行した場所の下の `.cache/stemcue/weights` に置かれる。
+
+Claude Code で使うなら、プロジェクトの `.claude/settings.json` に書いておくと、Claude が実行するコマンドすべてに効く。
+
+```json
+{
+  "env": {
+    "STEMCUE_WEIGHTS_DIR": ".cache/stemcue/weights"
+  }
+}
+```
 
 ### weight とハッシュ値について
 
@@ -148,17 +199,11 @@ librosa は、音が鳴り始めた瞬間や、高音・低音それぞれの音
 
 beat_this も完璧ではなく、曲の途中でテンポを半分と取り違えることがある。だから stemcue は、`diagnose` で怪しい所を見つけ、補正ファイルで直す使い方を前提にしている。librosa の拍の検出結果は、beat_this と食い違う区間を見つけるための照合用として `cues.json` に残している（`beat_check`）。
 
-## Claude Code のスキルを入れる
+## Claude Code のスキル
 
-スキルのフォルダを、全プロジェクト共通の置き場か、使いたいプロジェクトの中にコピーする。
+[使うプロジェクトの中に入れる](#使うプロジェクトの中に入れるおすすめ)手順で `.claude/skills/stemcue` をコピーしていれば、そのプロジェクトで Claude Code を開くとスキルが使える。パソコン全体に入れた場合は、`~/.claude/skills/` にコピーするとどのプロジェクトでも使える。
 
-```bash
-git clone https://github.com/nemalabs/stemcue
-cp -R stemcue/.claude/skills/stemcue ~/.claude/skills/                 # すべてのプロジェクトで使う場合
-cp -R stemcue/.claude/skills/stemcue /path/to/project/.claude/skills/  # 1 つのプロジェクトだけで使う場合
-```
-
-スキルは、上のインストール手順で入る `stemcue` コマンドを使う。Claude Code に stem のフォルダや曲のファイルを渡して「ヒットの位置を調べて」「小節の頭でカットしたい」のように頼むと、スキルの手順に沿って作業する。
+Claude Code に stem のフォルダや曲のファイルを渡して「ヒットの位置を調べて」「小節の頭でカットしたい」のように頼むと、スキルの手順に沿って作業する。スキルは `tools/stemcue` があればそれを使い、なければパソコン全体に入った `stemcue` を使う。どちらもなければ、勝手にインストールせずに知らせる。weight は、`STEMCUE_WEIGHTS_DIR` が設定されていなければ、プロジェクトの中の `.cache/stemcue/weights` に置く。
 
 ## 開発者向け
 

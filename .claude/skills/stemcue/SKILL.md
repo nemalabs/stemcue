@@ -5,8 +5,7 @@ description: Find 音ハメ (cut-to-music) timings in a Suno stem folder or a si
 
 # stemcue — hit timings and a trustworthy bar grid from Suno stems or a single song file
 
-stemcue is a CLI (`stemcue …` once installed with `uv tool install`; inside a clone of its repository use
-`uv run stemcue …` instead). It reads a folder of Suno stems (plus the full mix if available) or one audio file of the whole song, finds every attack per stem with librosa, tracks beats and downbeats
+stemcue is a CLI. It reads a folder of Suno stems (plus the full mix if available) or one audio file of the whole song, finds every attack per stem with librosa, tracks beats and downbeats
 with a hardened copy of beat_this, and writes `cues.json` plus a self-contained `viewer.html`. The raw beat_this grid is **not** trustworthy on real songs
 (on the reference song it reported 121 downbeats where the true grid has 75). This skill is the procedure for turning the raw output
 into a grid you can cut to, and for choosing the cut times.
@@ -16,14 +15,25 @@ which bars you verified by eye and which you inferred.
 
 ## 0. Setup (once)
 
+How to run the CLI (this skill writes `stemcue …` below; substitute accordingly):
+- If the project has a clone at `tools/stemcue`, run `uv run --project tools/stemcue stemcue …` from the project root.
+  `--project` does not change the working directory, so paths stay relative to the project root.
+- Otherwise, if `stemcue --help` works, the CLI is installed for the user (`uv tool install`); run `stemcue …`.
+- If neither works, tell the user; the per-project setup is
+  `git clone https://github.com/nemalabs/stemcue tools/stemcue`. Do not install anything outside the project without
+  asking.
+
+Weights:
 ```bash
 stemcue weights fetch            # pinned final0; SHA-256 checked before parsing
 ```
+- The weights directory is `--weights-dir` if given, else `$STEMCUE_WEIGHTS_DIR`, else `~/.cache/stemcue/weights`.
+  Inside a project, keep the weights in the project: when `STEMCUE_WEIGHTS_DIR` is not set, pass
+  `--weights-dir .cache/stemcue/weights` to every `weights` and `analyze` command. `analyze` downloads `final0` into
+  that directory on first use.
 - Weights come only through `stemcue weights fetch` / `stemcue weights import FILE --name NAME --sha256 HEX`.
   Never load a `.ckpt` with `torch.load`, never install upstream `beat_this` to "compare": the point of this tool is that
   checkpoint files are parsed by a restricted reader that cannot execute code.
-- Install the CLI first if `stemcue --help` fails: `uv tool install git+https://github.com/nemalabs/stemcue`.
-- Weights are installed into `~/.cache/stemcue/weights` by default (`--weights-dir` to change it).
 - matplotlib writes a font cache into `MPLCONFIGDIR`; when running inside a sandbox or a project that forbids writes to
   the home directory, set `MPLCONFIGDIR` to a directory inside the project for figure commands.
 

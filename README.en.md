@@ -47,16 +47,72 @@ how to run stemcue, how to find and fix mistakes in the grid, and how to choose 
 
 ## Install
 
-You need [uv](https://docs.astral.sh/uv/) (a tool that installs and runs Python programs). If Python 3.12 is missing, uv
-fetches it. PyTorch, which runs the AI model, comes along, so the first install takes a while to download.
+You need [uv](https://docs.astral.sh/uv/) (a tool that installs and runs Python programs) and git. If Python 3.12 is
+missing, uv fetches it. librosa, PyTorch (which runs the AI model) and the other libraries are installed by uv on first
+run; PyTorch is large, so the first run takes a while to download.
+
+### Inside the project that uses it (recommended)
+
+In the top folder of the project where you want to use stemcue:
+
+```bash
+git clone https://github.com/nemalabs/stemcue tools/stemcue
+mkdir -p .claude/skills
+cp -R tools/stemcue/.claude/skills/stemcue .claude/skills/     # if you also want the Claude Code skill
+```
+
+Run the commands from the project's top folder like this:
+
+```bash
+uv run --project tools/stemcue stemcue --help
+```
+
+`--project tools/stemcue` means "use the stemcue in tools/stemcue"; it does not change the folder the command runs in,
+so give song files relative to the project's top folder. stemcue's Python environment is created in
+`tools/stemcue/.venv` and does not affect other projects.
+
+The rest of this README writes the command as `stemcue …`; inside a project, read it as
+`uv run --project tools/stemcue stemcue …`.
+
+If you do not want `tools/stemcue/` in your project's git, add it to `.gitignore`.
+
+### For the whole computer
+
+To type `stemcue` from any folder:
 
 ```bash
 uv tool install git+https://github.com/nemalabs/stemcue
+```
+
+If the shell then says `stemcue` is not found, the folder where uv puts commands (`uv tool dir --bin` shows it) is not on
+your PATH. Run `uv tool update-shell` and open a new terminal.
+
+### Getting the weights
+
+```bash
 stemcue weights fetch          # downloads the beat_this weights (final0) and converts them
 ```
 
-The weights are stored in `~/.cache/stemcue/weights`; pass `--weights-dir` to `weights` and `analyze` to use another
-place. You can skip `weights fetch`: the first `analyze` downloads them automatically.
+You can skip this: the first `analyze` downloads them automatically.
+
+The weights folder is chosen in this order:
+
+1. `--weights-dir` on the command
+2. the environment variable `STEMCUE_WEIGHTS_DIR`
+3. otherwise `~/.cache/stemcue/weights` (inside your home folder)
+
+To keep the weights inside a project, set `STEMCUE_WEIGHTS_DIR`. For example, `STEMCUE_WEIGHTS_DIR=.cache/stemcue/weights`
+puts them in `.cache/stemcue/weights` under the folder the command runs in.
+
+With Claude Code, put it in the project's `.claude/settings.json`; it then applies to every command Claude runs:
+
+```json
+{
+  "env": {
+    "STEMCUE_WEIGHTS_DIR": ".cache/stemcue/weights"
+  }
+}
+```
 
 ### About the weights and their hashes
 
@@ -180,18 +236,16 @@ beat_this is not perfect either: it can switch to half tempo in the middle of a 
 used by finding suspicious spots with `diagnose` and fixing them with a fix file. librosa's beats are kept in
 `cues.json` (`beat_check`) as a cross-check that points at spans where the two disagree.
 
-## Installing the Claude Code skill
+## Claude Code skill
 
-Copy the skill folder to the shared skill folder for all projects, or into one project:
+If you copied `.claude/skills/stemcue` as in [Inside the project that uses it](#inside-the-project-that-uses-it-recommended),
+the skill is available when you open that project in Claude Code. With a whole-computer install, copy it to
+`~/.claude/skills/` to use it in every project.
 
-```bash
-git clone https://github.com/nemalabs/stemcue
-cp -R stemcue/.claude/skills/stemcue ~/.claude/skills/                 # all projects
-cp -R stemcue/.claude/skills/stemcue /path/to/project/.claude/skills/  # one project only
-```
-
-The skill uses the `stemcue` command from the install step above. Give Claude Code a stem folder or a song file and ask,
-for example, "find the hits" or "I want to cut on bar starts"; it follows the skill's procedure.
+Give Claude Code a stem folder or a song file and ask, for example, "find the hits" or "I want to cut on bar starts"; it
+follows the skill's procedure. The skill uses `tools/stemcue` when it exists, else a `stemcue` installed for the whole
+computer; if there is neither, it tells you instead of installing anything. Unless `STEMCUE_WEIGHTS_DIR` is set, it keeps
+the weights in the project's `.cache/stemcue/weights`.
 
 ## For developers
 
