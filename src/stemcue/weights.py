@@ -4,6 +4,7 @@ import hashlib
 import http.client
 import json
 import logging
+import os
 import re
 import time
 import urllib.error
@@ -31,6 +32,7 @@ PINNED = {
 }
 MAX_CHECKPOINT_BYTES = 134217728
 DEFAULT_WEIGHTS_DIR = Path("~/.cache/stemcue/weights")
+WEIGHTS_DIR_ENV = "STEMCUE_WEIGHTS_DIR"
 FORMAT_VERSION = "1"
 TIMEOUT_S = 60
 DOWNLOAD_DEADLINE_S = 600
@@ -356,4 +358,5 @@ def load_model(name: str, weights_dir: Path) -> tuple[BeatThis, str]:
 
 
 def default_weights_dir() -> Path:
-    return DEFAULT_WEIGHTS_DIR.expanduser()
+    """$STEMCUE_WEIGHTS_DIR when set and not empty, else ~/.cache/stemcue/weights."""
+    return Path(os.environ.get(WEIGHTS_DIR_ENV) or DEFAULT_WEIGHTS_DIR).expanduser()

@@ -12,6 +12,7 @@ from stemcue.errors import InputError, NetworkError, UsageError, WeightsIntegrit
 from stemcue.grid import apply_fix
 from stemcue.pipeline import analyze
 
+WEIGHTS_DIR_HELP = f"default: ${weights.WEIGHTS_DIR_ENV}, else {weights.DEFAULT_WEIGHTS_DIR}"
 EXIT_USAGE = 2
 EXIT_WEIGHTS = 3
 EXIT_INPUT = 4
@@ -29,18 +30,18 @@ def _parser() -> argparse.ArgumentParser:
         "--mix", help="audio for beat tracking and playback when INPUT is a stem folder (default: sum of the stems)"
     )
     an.add_argument("--checkpoint", default="final0", help="weights name (default: final0)")
-    an.add_argument("--weights-dir", default=str(weights.DEFAULT_WEIGHTS_DIR), help="default: %(default)s")
+    an.add_argument("--weights-dir", help=WEIGHTS_DIR_HELP)
 
     wt = sub.add_parser("weights", help="install beat_this weights")
     wsub = wt.add_subparsers(dest="weights_command", required=True)
     fe = wsub.add_parser("fetch", help="download pinned checkpoints and convert them to safetensors")
     fe.add_argument("names", nargs="*", metavar="NAME", default=["final0"])
-    fe.add_argument("--weights-dir", default=str(weights.DEFAULT_WEIGHTS_DIR), help="default: %(default)s")
+    fe.add_argument("--weights-dir", help=WEIGHTS_DIR_HELP)
     im = wsub.add_parser("import", help="verify and convert a checkpoint file already on disk")
     im.add_argument("file", metavar="FILE")
     im.add_argument("--name", required=True)
     im.add_argument("--sha256", help="expected SHA-256 (64 hex); required for names that are not pinned")
-    im.add_argument("--weights-dir", default=str(weights.DEFAULT_WEIGHTS_DIR), help="default: %(default)s")
+    im.add_argument("--weights-dir", help=WEIGHTS_DIR_HELP)
 
     gr = sub.add_parser("grid", help="rebuild beats, bars and positions from a grid fix file")
     gr.add_argument("cues", metavar="CUES")
@@ -106,7 +107,7 @@ def _run(args: argparse.Namespace) -> None:
         sys.stdout.write(cuts.model_dump_json(indent=2) + "\n")
         return
     # Only analyze and weights define --weights-dir.
-    weights_dir = Path(args.weights_dir).expanduser()
+    weights_dir = Path(args.weights_dir).expanduser() if args.weights_dir else weights.default_weights_dir()
     if args.command == "analyze":
         cues_path, viewer_path = analyze(
             Path(args.input),
